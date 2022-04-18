@@ -230,7 +230,10 @@ if __name__ =='__main__':
         temp = []
         for tag in df['tags'][i]:
             if tag in lst_top_tags:
-                temp.append(tag)
+                dup_tag = tag.split(', ') #remove duplicated tag in multilabel
+                for v in dup_tag:
+                    if v not in temp:
+                        temp.append(v)
 
         if (len(temp) > 0):
             x.append(df['clean_text'][i])
@@ -273,7 +276,7 @@ if __name__ =='__main__':
 
     from pytorch_pretrained_bert import BertTokenizer, BertForTokenClassification
     #model = MultiClassifier(args, n_classes=10, steps_per_epoch=steps_per_epoch)
-    model = BertForTokenClassification.from_pretrained("bert-base-uncased", num_labels=50)
+    model = BertForTokenClassification.from_pretrained("bert-base-uncased", num_labels=18)
     # Initialize Pytorch Lightning callback for Model checkpointing
 
     # saves a file like: input/QTag-epoch=02-val_loss=0.32.ckpt
@@ -316,7 +319,7 @@ if __name__ =='__main__':
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
 
     train_dataset = QQDataset(text=x_tr, tags=y_tr, tokenizer=Bert_tokenizer,
-                                     max_len=args.max_seq_len)
+                                     max_len=18) #fixed max_len 50 to 18
     val_dataset = QQDataset(text=x_val, tags=y_val, tokenizer=Bert_tokenizer,
                                    max_len=args.max_seq_len)
     test_dataset = QQDataset(text=x_test, tags=y_test, tokenizer=Bert_tokenizer,
@@ -368,7 +371,7 @@ if __name__ =='__main__':
             quest,
             None,
             add_special_tokens=True,
-            max_length=50, #300
+            max_length=18, #300
             padding='max_length',
             return_token_type_ids=False,
             return_attention_mask=True,
@@ -386,9 +389,6 @@ if __name__ =='__main__':
     attention_masks = torch.cat(attention_masks, dim=0)
     labels = torch.tensor(y_test)
 
-    # Set the batch size.
-    TEST_BATCH_SIZE = 64
-
     # Create the DataLoader.
     pred_data = TensorDataset(input_ids, attention_masks, labels)
     pred_sampler = SequentialSampler(pred_data)
@@ -405,6 +405,7 @@ if __name__ =='__main__':
     # Tracking variables
     pred_outs, true_labels = [], []
     # i=0
+
     # Predict
     for batch in pred_dataloader:
         # Add batch to GPU
@@ -422,14 +423,15 @@ if __name__ =='__main__':
             label_ids = b_labels.to('cpu').numpy()
 
 
-        label_ids = b_labels.to('cpu').numpy()
-        masks = b_attn_mask.to('cpu').numpy()
+        #label_ids = b_labels.to('cpu').numpy()
+        #masks = b_attn_mask.to('cpu').numpy()
         pred_outs.append(pred_out)
         true_labels.append(label_ids)
 
     # Combine the results across all batches.
     flat_pred_outs = np.concatenate(pred_outs, axis=0)
-    flat_pred_outs = flat_pred_outs[:,:,0]
+    flat_pred_outs.shape
+    flat_pred_outs = flat_pred_outs[:,0,:]
     # Combine the correct labels for each batch into a single list.
     flat_true_labels = np.concatenate(true_labels, axis=0)
 
