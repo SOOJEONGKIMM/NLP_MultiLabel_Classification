@@ -117,7 +117,7 @@ if __name__ =='__main__':
     args = parameter_parser()
     init_logging()
     type_data = open('D:/2021-2_NLP_Relation\RL_Relation\sentivent_event_sentence_classification\data\processed\dataset_event_type.tsv','r',encoding='utf-8')
-   # subtype_data = get_subtype_rawdata(args)
+    #subtype_data = get_subtype_rawdata(args)
     #type_data=pd.DataFrame(type_data)
     data = type_data.readlines()
     column=data[0]
@@ -143,7 +143,7 @@ if __name__ =='__main__':
     id = [i for i in range(len(type_data))]
     type_data['Id'] = id
 
-    tags =type_data['types_event'].value_counts().keys()
+    tags = type_data['types_event'].value_counts().keys()
     # First group tags Id wise
     tags_unq = type_data['types_event'].unique()
 
@@ -256,9 +256,9 @@ if __name__ =='__main__':
     # Plot the distribution
     plt.figure(figsize=[8, 5])
     plt.hist(word_cnt, bins=40)
-    plt.xlabel('Word Count/Question')
+    plt.xlabel('Word Count/Sentence')
     plt.ylabel('# of Occurences')
-    plt.title("Frequency of Word Counts/sentence")
+    plt.title("Frequency of Word Counts/Sentence")
     plt.show()
 
 
@@ -321,7 +321,7 @@ if __name__ =='__main__':
     train_dataset = QQDataset(text=x_tr, tags=y_tr, tokenizer=Bert_tokenizer,
                                      max_len=18) #fixed max_len 50 to 18
     val_dataset = QQDataset(text=x_val, tags=y_val, tokenizer=Bert_tokenizer,
-                                   max_len=args.max_seq_len)
+                                   max_len=18)
     test_dataset = QQDataset(text=x_test, tags=y_test, tokenizer=Bert_tokenizer,
                                     max_len=args.max_seq_len)
 
@@ -330,6 +330,13 @@ if __name__ =='__main__':
     train_dataloader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, num_workers=0)
     val_dataloader = DataLoader(val_dataset, batch_size=args.eval_batch_size)
     test_dataloader = DataLoader(test_dataset, batch_size=args.eval_batch_size)
+
+
+    def flat_accuracy(preds, labels, masks):
+        mask_flat = masks.flatten()
+        pred_flat = np.argmax(preds, axis=2).flatten()[mask_flat == 1]
+        labels_flat = labels.flatten()[mask_flat == 1]
+        return np.sum(pred_flat == labels_flat) / len(labels_flat)
 
     epochs=12
     max_grad_norm = 1.0
@@ -355,6 +362,7 @@ if __name__ =='__main__':
             optimizer.step()
             model.zero_grad()
         print("Train loss: {}".format(tr_loss / nb_tr_steps))
+
 
     # Size of Test set
     print(f'Number of Questions = {len(x_test)}')
@@ -387,7 +395,7 @@ if __name__ =='__main__':
     # Now convert the lists into tensors.
     input_ids = torch.cat(input_ids, dim=0)
     attention_masks = torch.cat(attention_masks, dim=0)
-    labels = torch.tensor(y_test)
+    labels = torch.tensor(y_test, dtype=torch.long)
 
     # Create the DataLoader.
     pred_data = TensorDataset(input_ids, attention_masks, labels)
@@ -400,13 +408,15 @@ if __name__ =='__main__':
     # Put model in evaluation mode
     model = model.to(device)  # moving model to cuda
     model.eval()
-
+    eval_loss, eval_accuracy = 0, 0
+    nb_eval_steps = 0
 
     # Tracking variables
     pred_outs, true_labels = [], []
     # i=0
 
     # Predict
+
     for batch in pred_dataloader:
         # Add batch to GPU
         batch = tuple(t.to(device) for t in batch)
@@ -416,17 +426,26 @@ if __name__ =='__main__':
 
         with torch.no_grad():
             # Forward pass, calculate logit predictions
+            tmp_eval_loss = model(input_ids=b_input_ids,  attention_mask=b_attn_mask, labels=b_labels)
             pred_out = model(b_input_ids, b_attn_mask)
             pred_out = torch.sigmoid(pred_out)
             # Move predicted output and labels to CPU
             pred_out = pred_out.detach().cpu().numpy()
             label_ids = b_labels.to('cpu').numpy()
+            masks = b_attn_mask.to('cpu').numpy()
 
 
-        #label_ids = b_labels.to('cpu').numpy()
-        #masks = b_attn_mask.to('cpu').numpy()
+            tmp_eval_accuracy = flat_accuracy(pred_out, label_ids, masks)
+            eval_loss += tmp_eval_loss.mean().item()
+            eval_accuracy += tmp_eval_accuracy
+            nb_eval_steps += 1
+            #label_ids = b_labels.to('cpu').numpy()
+            #masks = b_attn_mask.to('cpu').numpy()
+        eval_loss = eval_loss / nb_eval_steps
         pred_outs.append(pred_out)
         true_labels.append(label_ids)
+        print("Val_Loss: {}".format(eval_loss))
+        print("Accuracy: {}".format(eval_accuracy / nb_eval_steps))
 
     # Combine the results across all batches.
     flat_pred_outs = np.concatenate(pred_outs, axis=0)
@@ -438,6 +457,7 @@ if __name__ =='__main__':
     # define candidate threshold values
     a = flat_pred_outs[flat_true_labels == 1].mean()
     threshold = np.arange(a, a+0.05, 0.01)
+    threshold = np.arange(0.4, 0.51, 0.01)
     threshold
 
 
@@ -478,12 +498,37 @@ if __name__ =='__main__':
     print(f'Optimal Threshold Value = {opt_thresh}')
 
     y_pred_labels = classify(flat_pred_outs, opt_thresh)
+
+    #MR = np.all(int(pred_bin_label== np.array(flat_true_labels))).mean()
     #y_pred_labels = np.where(flat_pred_outs[0]==flat_pred_outs[0][flat_true_labels[0]==1])
     y_pred = np.array(y_pred_labels).ravel()  # Flatten
-
-    print(metrics.classification_report(y_true, y_pred))
+    target_names = ['class 0', 'class 1']
+    print(metrics.classification_report(y_true, y_pred,  target_names=target_names))
 
     y_pred = mlb.inverse_transform(np.array(y_pred_labels))
     y_act = mlb.inverse_transform(flat_true_labels)
-
+    matching=[]
+    for i in range(len(new_datas)):
+        if new_datas[i][1] in new_datas[i][-1]:
+            matching.append(1)
+        else:
+            matching.append(0)
+    for p in y_pred:
+        for t in y_act:
+            #print(p, t)
+            if t in p:
+                matching.append(1)
     p_df = pd.DataFrame({'Body': x_test, 'Actual Tags': y_act, 'Predicted Tags': y_pred})
+
+    #p_df.to_csv('multilabel_result.csv')
+
+    '''
+    def emr(y_true, y_pred):
+        n = len(y_true)
+        row_indicators = np.all(y_true == y_pred, axis=1)  # axis = 1 will check for equality along rows.
+        exact_match_count = np.sum(row_indicators)
+        return exact_match_count / n
+
+
+    emr(flat_true_labels, np.array(y_pred_labels))
+    '''
